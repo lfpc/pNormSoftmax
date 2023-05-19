@@ -1,7 +1,7 @@
-from CIFAR import list_models as list_models_cifar
-from CIFAR import get_model as get_model_cifar
-from ImageNet import list_models as list_models_imagenet
-from ImageNet import get_model as get_model_imagenet
+from .CIFAR import list_models as list_models_cifar
+from .CIFAR import get_model as get_model_cifar
+from .ImageNet import list_models as list_models_imagenet
+from .ImageNet import get_model as get_model_imagenet
 
 def list_models(data:str = 'ImageNet'):
     if data.lower() == 'imagenet':
