@@ -28,8 +28,8 @@ class optimize:
     '''Gradient methods could be used, but a grid search
     on a small set of p's show to be strongly efficient for pNormSoftmax optimization.
     Also, AURC and AUROC are not differentiable'''
-    p_range = torch.range(10)
-    T_range = torch.arange(0.01,3,0.01)
+    p_range = torch.arange(8)
+    T_range = torch.arange(0.01,2,0.01)
     @staticmethod
     def p_and_beta(logits,risk,metric = AURC,p_range = p_range,T_range =T_range):
         vals = np.inf
@@ -43,7 +43,9 @@ class optimize:
     
     @staticmethod
     def p(logits, risk,metric = AURC,p_range = p_range, heuristic = True):
-        vals = optimize.p_grid(logits,risk,metric,p_range, heuristic=heuristic)
+        if heuristic: beta = None
+        else: beta = 1.0
+        vals = optimize.p_grid(logits,risk,metric,p_range, beta)
         p = p_range[np.argmin(vals)]
         return p
     @staticmethod
