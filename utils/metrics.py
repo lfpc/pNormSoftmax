@@ -7,63 +7,50 @@ def accuracy(y_pred,y_true):
     return correct_class(y_pred,y_true).sum()/y_true.size(0)
 
 
-def ROC_curve(loss, uncertainty, return_threholds = False):
-    fpr, tpr, thresholds = roc_curve(loss.cpu(),uncertainty.cpu())
+def ROC_curve(loss, confidence, return_threholds = False):
+    fpr, tpr, thresholds = roc_curve(loss.cpu(),(1-confidence).cpu())
     if return_threholds:
         return fpr,tpr,thresholds
     else:
         return fpr,tpr
     
-def RC_curve(loss:torch.tensor, uncertainty:torch.tensor = None,coverages = None, expert=False, expert_cost=0, confidence = None,return_coverages = False):
+def RC_curve(loss:torch.tensor, confidence:torch.tensor,coverages = None):
     loss = loss.view(-1)
-    if uncertainty is None:
-        if confidence is not None:
-            uncertainty = -confidence
-    uncertainty = uncertainty.view(-1)
+    confidence = confidence.view(-1)
     n = len(loss)
-    assert len(uncertainty) == n
-    uncertainty,indices = uncertainty.sort(descending = False)
+    assert len(confidence) == n
+    confidence,indices = confidence.sort(descending = True)
     loss = loss[indices]
+
     if coverages is not None:
-        coverages = torch.as_tensor(coverages,device = uncertainty.device)
-        thresholds = uncertainty.quantile(coverages)
-        indices = torch.searchsorted(uncertainty,thresholds).minimum(torch.as_tensor(uncertainty.size(0)-1,device=uncertainty.device))
+        #deprecated
+        coverages = torch.as_tensor(coverages,device = loss.device)
+        thresholds = confidence.quantile(coverages)
+        indices = torch.searchsorted(confidence,thresholds).minimum(torch.as_tensor(confidence.size(0)-1,device=loss.device))
     else:
-        thresholds,indices = uncertainty.unique_consecutive(return_inverse = True)
+        #indices = confidence.diff().nonzero().view(-1)
+        indices = torch.arange(n)
     coverages = (1 + indices)/n
     risks = (loss.cumsum(0)[indices])/n
+    risks /= coverages
+    return coverages.cpu().numpy(), risks.cpu().numpy()
 
-    if expert:
-        if torch.any(expert_cost):
-            expert_cost = torch.as_tensor(expert_cost,device=uncertainty.device).reshape(-1)
-            if expert_cost.size == 1:
-                risks += (1 - coverages)*expert_cost
-            else:
-                assert len(expert_cost) == n
-                expert_cost = torch.cumsum(expert_cost)
-                expert_cost = expert_cost[-1] - expert_cost
-                risks += expert_cost[indices]/n
-    else:
-        risks /= coverages
-    if return_coverages:
-        return coverages.cpu().numpy(), risks.cpu().numpy()
-    else: return risks.cpu().numpy()
 
-def AUROC(loss,uncertainty):
-    fpr,tpr = ROC_curve(loss,uncertainty)
+def AUROC(loss,confidence):
+    fpr,tpr = ROC_curve(loss,confidence)
     return auc(fpr, tpr)
 
-def AURC(loss,uncertainty, coverages = None):
-    coverages,risk_list = RC_curve(loss,uncertainty, coverages,return_coverages = True)
+def AURC(loss,confidence, coverages = None):
+    coverages,risk_list = RC_curve(loss,confidence, coverages,return_coverages = True)
     return auc(coverages,risk_list)
 
-def AUROC_fromlogits(y_pred,y_true,uncertainty, risk_fn = wrong_class):
+def AUROC_fromlogits(y_pred,y_true,confidence, risk_fn = wrong_class):
     risk = risk_fn(y_pred,y_true).float()
-    return AUROC(risk,uncertainty)
+    return AUROC(risk,confidence)
 
-def AURC_fromlogits(y_pred,y_true,uncertainty, risk_fn = wrong_class, coverages = None):
+def AURC_fromlogits(y_pred,y_true,confidence, risk_fn = wrong_class, coverages = None):
     risk = risk_fn(y_pred,y_true).float()
-    return AURC(risk,uncertainty,coverages)
+    return AURC(risk,confidence,coverages)
 
 
 class ECE(torch.nn.Module):
@@ -82,7 +69,7 @@ class ECE(torch.nn.Module):
     "Obtaining Well Calibrated Probabilities Using Bayesian Binning." AAAI.
     2015.
     """
-    def __init__(self, n_bins=10, softmax = False):
+    def __init__(self, n_bins=10, softmax = True):
         """
         n_bins (int): number of confidence interval bins
         """
@@ -92,9 +79,9 @@ class ECE(torch.nn.Module):
         self.bin_uppers = bin_boundaries[1:]
         self.SM = softmax
 
-    def forward(self, y, labels):
+    def forward(self, y:torch.tensor, labels):
         if self.SM:
-            y = torch.nn.functional.softmax(y, dim=1)
+            y = y.softmax(-1)
         confidences, predictions = torch.max(y, 1)
         accuracies = predictions.eq(labels)
 
@@ -107,16 +94,16 @@ class ECE(torch.nn.Module):
                 accuracy_in_bin = accuracies[in_bin].float().mean()
                 avg_confidence_in_bin = confidences[in_bin].mean()
                 ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-
         return ece
 
 class AdaptiveECE(torch.nn.Module):
     '''
     Compute Adaptive ECE
     '''
-    def __init__(self, n_bins=15, softmax = False):
+    def __init__(self, n_bins=15, softmax = True):
         super(AdaptiveECE, self).__init__()
         self.nbins = n_bins
+        self.SM = softmax
 
     def histedges_equalN(self, x):
         npt = len(x)
@@ -124,8 +111,9 @@ class AdaptiveECE(torch.nn.Module):
                      torch.arange(npt),
                      torch.sort(x))
     def forward(self, logits, labels):
-        softmaxes = torch.nn.functional.softmax(logits, dim=1)
-        confidences, predictions = torch.max(softmaxes, 1)
+        if self.SM:
+            logits = torch.nn.functional.softmax(logits, dim=1)
+        confidences, predictions = torch.max(logits, 1)
         accuracies = predictions.eq(labels)
         n, bin_boundaries = torch.histogram(confidences.cpu().detach(), self.histedges_equalN(confidences.cpu().detach()))
         #print(n,confidences,bin_boundaries)
@@ -147,19 +135,21 @@ class ClasswiseECE(torch.nn.Module):
     '''
     Compute Classwise ECE
     '''
-    def __init__(self, n_bins=15):
+    def __init__(self, n_bins=15, softmax = True):
         super(ClasswiseECE, self).__init__()
         bin_boundaries = torch.linspace(0, 1, n_bins + 1)
         self.bin_lowers = bin_boundaries[:-1]
         self.bin_uppers = bin_boundaries[1:]
+        self.SM = softmax
 
     def forward(self, logits, labels):
         num_classes = int((torch.max(labels) + 1).item())
-        softmaxes = torch.nn.functional.softmax(logits, dim=1)
+        if self.SM:
+            logits = torch.nn.functional.softmax(logits, dim=1)
         per_class_sce = None
 
         for i in range(num_classes):
-            class_confidences = softmaxes[:, i]
+            class_confidences = logits[:, i]
             class_sce = torch.zeros(1, device=logits.device)
             labels_in_class = labels.eq(i) # one-hot vector of all positions where the label belongs to the class i
 
