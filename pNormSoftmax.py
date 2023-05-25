@@ -59,13 +59,13 @@ class optimize:
     def T_grid(logits,risk,metric = AURC,T_range = T_range):
         vals = []
         for T in T_range:
-            vals.append(metric(risk,1-MSP(logits.div(T))).item())
+            vals.append(metric(risk,MSP(logits.div(T))).item())
         return vals
     @staticmethod
     def p_grid(logits,risk,metric = AURC,p_range = p_range, beta = None):
         vals = []
         for p in p_range:
-            vals.append(metric(risk,1-pNormSoftmax(logits,p,beta)).item())
+            vals.append(metric(risk,pNormSoftmax(logits,p,beta)).item())
         return vals
     @staticmethod
     def p_T_grid(logits,risk,metric = AURC,p_range = p_range,T_range = T_range):

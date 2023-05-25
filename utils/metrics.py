@@ -1,6 +1,6 @@
 from sklearn.metrics import roc_curve,auc
 import torch
-from .measures import wrong_class,correct_class
+from .measures import wrong_class,correct_class,MSP
 
 def accuracy(y_pred,y_true):
     '''Returns the accuracy in a batch'''
@@ -29,7 +29,7 @@ def RC_curve(loss:torch.tensor, confidence:torch.tensor,coverages = None):
         indices = torch.searchsorted(confidence,thresholds).minimum(torch.as_tensor(confidence.size(0)-1,device=loss.device))
     else:
         #indices = confidence.diff().nonzero().view(-1)
-        indices = torch.arange(n)
+        indices = torch.arange(n,device=loss.device)
     coverages = (1 + indices)/n
     risks = (loss.cumsum(0)[indices])/n
     risks /= coverages
@@ -41,16 +41,19 @@ def AUROC(loss,confidence):
     return auc(fpr, tpr)
 
 def AURC(loss,confidence, coverages = None):
-    coverages,risk_list = RC_curve(loss,confidence, coverages,return_coverages = True)
+    coverages,risk_list = RC_curve(loss,confidence, coverages)
     return auc(coverages,risk_list)
 
-def AUROC_fromlogits(y_pred,y_true,confidence, risk_fn = wrong_class):
+def AUROC_fromlogits(y_pred,y_true,confidence = None, risk_fn = wrong_class):
+    if confidence is None: confidence = MSP(y_pred)
     risk = risk_fn(y_pred,y_true).float()
     return AUROC(risk,confidence)
 
-def AURC_fromlogits(y_pred,y_true,confidence, risk_fn = wrong_class, coverages = None):
+def AURC_fromlogits(y_pred,y_true,confidence = None, risk_fn = wrong_class, coverages = None):
+    if confidence is None: confidence = MSP(y_pred)
     risk = risk_fn(y_pred,y_true).float()
     return AURC(risk,confidence,coverages)
+
 
 
 class ECE(torch.nn.Module):

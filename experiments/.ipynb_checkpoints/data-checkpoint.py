@@ -46,21 +46,23 @@ def get_dataloader(DATA:str, split = 'test', batch_size = 100, data_dir = r'/dat
                                     transform=transforms),
                         batch_size=batch_size, pin_memory=True)
 
-def upload_logits(model_arc:str,DATA:str = 'ImageNet',models_dir= r'/models', 
+def upload_logits(MODEL_ARC:str,DATA:str = 'ImageNet',PATH_MODELS= r'/models', 
                   split = 'test', device = torch.device('cuda'), **kwargs_data):
-    models_dir = join(models_dir,DATA)
-    if f'{model_arc}_{DATA}_outputs_{split}.pt' in listdir(join(models_dir,'outputs')):
-        outputs = torch.load(join(models_dir,'outputs',f'{model_arc}_{DATA}_outputs_{split}.pt')).to(device)
-        labels = torch.load(join(models_dir,'outputs',f'{DATA}_labels_{split}.pt')).to(device)
+    
+    if f'{MODEL_ARC}_{DATA}_outputs_{split}.pt' in listdir(PATH_MODELS):
+        outputs = torch.load(join(PATH_MODELS,f'{MODEL_ARC}_{DATA}_outputs_{split}.pt')).to(device)
+        labels = torch.load(join(PATH_MODELS,f'{DATA}_labels_{split}.pt')).to(device)
         return outputs,labels
     else:
-        classifier,transforms = get_model(model_arc,DATA,True,True,join(models_dir))
+        from models import get_model
+        
+        classifier,transforms = get_model(MODEL_ARC,DATA,True,True,PATH_MODELS)
         classifier = classifier.to(device, torch.get_default_dtype()).eval()
         dataloader = get_dataloader(DATA,split,transforms = transforms,**kwargs_data)
         outputs,labels =  accumulate_results(classifier,dataloader)
 
-        torch.save(outputs, join(models_dir,'outputs',f'{model_arc}_{DATA}_outputs_{split}.pt'))
-        torch.save(labels,join(models_dir,'outputs',f'{DATA}_labels_{split}.pt'))
+        torch.save(outputs, join(PATH_MODELS,f'{MODEL_ARC}_{DATA}_outputs_{split}.pt'))
+        torch.save(labels,join(PATH_MODELS,f'{DATA}_labels_{split}.pt'))
         return outputs.to(torch.get_default_dtype()),labels
 
 class split():
