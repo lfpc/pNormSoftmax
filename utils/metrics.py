@@ -35,6 +35,12 @@ def RC_curve(loss:torch.tensor, confidence:torch.tensor,coverages = None):
     risks /= coverages
     return coverages.cpu().numpy(), risks.cpu().numpy()
 
+def SAC(risk:torch.tensor,confidence:torch.tensor,accuracy):
+    coverages,risk = RC_curve(risk,confidence)
+    risk = 1-risk #accuracy
+    coverages = coverages[risk>=accuracy]
+    if coverages.size>0: return coverages[-1]
+    else: return 0.0
 
 def AUROC(loss,confidence):
     fpr,tpr = ROC_curve(loss,confidence)
@@ -103,35 +109,34 @@ class AdaptiveECE(torch.nn.Module):
     '''
     Compute Adaptive ECE
     '''
-    def __init__(self, n_bins=15, softmax = True):
+    def __init__(self, n_bins=15):
         super(AdaptiveECE, self).__init__()
-        self.nbins = n_bins
-        self.SM = softmax
+        self.n_bins = n_bins
 
-    def histedges_equalN(self, x):
-        npt = len(x)
-        return torch.nn.functional.interpolate(torch.linspace(0, npt, self.nbins + 1),
-                     torch.arange(npt),
-                     torch.sort(x))
-    def forward(self, logits, labels):
-        if self.SM:
-            logits = torch.nn.functional.softmax(logits, dim=1)
-        confidences, predictions = torch.max(logits, 1)
-        accuracies = predictions.eq(labels)
-        n, bin_boundaries = torch.histogram(confidences.cpu().detach(), self.histedges_equalN(confidences.cpu().detach()))
-        #print(n,confidences,bin_boundaries)
-        self.bin_lowers = bin_boundaries[:-1]
-        self.bin_uppers = bin_boundaries[1:]
-        ece = torch.zeros(1, device=logits.device)
-        for bin_lower, bin_upper in zip(self.bin_lowers, self.bin_uppers):
-            # Calculated |confidence - accuracy| in each bin
-            in_bin = confidences.gt(bin_lower.item()) * confidences.le(bin_upper.item())
-            prop_in_bin = in_bin.float().mean()
-            if prop_in_bin.item() > 0:
-                accuracy_in_bin = accuracies[in_bin].float().mean()
-                avg_confidence_in_bin = confidences[in_bin].mean()
-                ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-        return ece
+    def get_bounds(self, x):
+        return x.quantile(torch.linspace(0,1,self.n_bins+1,device=x.device))
+    def from_logits(self,logits,labels):
+        return self.forward(MSP(logits),wrong_class(logits,labels).float())
+    def get_indices(self,x:torch.tensor):
+        return torch.linspace(0,x.size(0),self.n_bins+1,device=x.device).long()
+    def get_bins(self,confidence:torch.tensor,errors:torch.tensor):
+        confidence,indices = confidence.sort()
+        errors = errors[indices]
+        confs = []
+        accs = []
+        indices = self.get_indices(confidence)
+        for i,b1 in enumerate(indices[:-1]):
+            b2 = indices[i+1]
+            confs.append(confidence[b1:b2].mean())
+            accs.append(1-(errors[b1:b2].sum()/(b2-b1)))
+        return torch.tensor(confs),torch.tensor(accs)
+    def forward(self, confidence:torch.tensor,errors:torch.tensor):
+        confs,accs = self.get_bins(confidence,errors)
+        return (confs-accs).abs().mean()
+
+        
+
+
 
 
 class ClasswiseECE(torch.nn.Module):

@@ -74,6 +74,16 @@ class optimize:
             vals_T = optimize.T_grid(pNormSoftmax(logits,p,None,'logits'),risk,metric,T_range)
             vals.append(vals_T)
         return vals
+    @staticmethod
+    def T_fromloss(logits,labels,loss = torch.nn.CrossEntropyLoss(),T_range = T_range):
+        vals = optimize.T_grid_fromloss(logits,labels,loss,T_range)
+        return T_range[np.argmin(vals)]
+    @staticmethod
+    def T_grid_fromloss(logits,labels,loss = torch.nn.CrossEntropyLoss(),T_range = T_range):
+        vals = []
+        for T in T_range:
+            vals.append(loss(logits.div(T),labels).item())
+        return vals
     
 def optimal_pNormSoftmax(z:torch.tensor,risk:torch.tensor,metric = AURC,optimize_beta = False,**kwargs):
     if optimize_beta: p,beta = optimize.p_and_beta(z,risk,metric,**kwargs)
