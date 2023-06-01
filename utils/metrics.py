@@ -1,6 +1,7 @@
 from sklearn.metrics import roc_curve,auc
 import torch
 from .measures import wrong_class,correct_class,MSP
+from numpy import r_,quantile
 
 def accuracy(y_pred,y_true):
     '''Returns the accuracy in a batch'''
@@ -14,7 +15,8 @@ def ROC_curve(loss, confidence, return_threholds = False):
     else:
         return fpr,tpr
     
-def RC_curve(loss:torch.tensor, confidence:torch.tensor,coverages = None):
+def RC_curve(loss:torch.tensor, confidence:torch.tensor,
+             coverages = None, return_thresholds:bool = False):
     loss = loss.view(-1)
     confidence = confidence.view(-1)
     n = len(loss)
@@ -33,7 +35,17 @@ def RC_curve(loss:torch.tensor, confidence:torch.tensor,coverages = None):
     coverages = (1 + indices)/n
     risks = (loss.cumsum(0)[indices])/n
     risks /= coverages
-    return coverages.cpu().numpy(), risks.cpu().numpy()
+    coverages = r_[0.,coverages.cpu().numpy()]
+    risks = r_[0.,risks.cpu().numpy()]
+
+    if return_thresholds:
+        thresholds = quantile(confidence.cpu().numpy(),1-coverages)
+        return coverages, risks, thresholds
+    else: return coverages, risks
+
+def coverages_from_t(g:torch.tensor,t):
+    return g.le(t.view(-1,1)).sum(-1)/g.size(0)
+
 
 def SAC(risk:torch.tensor,confidence:torch.tensor,accuracy):
     coverages,risk = RC_curve(risk,confidence)
